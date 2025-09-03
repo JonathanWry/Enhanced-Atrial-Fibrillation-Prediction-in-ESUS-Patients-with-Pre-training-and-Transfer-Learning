@@ -22,24 +22,48 @@ We represent patient data as a **hypergraph**: nodes = diagnostic features; hype
 
 ### 1) From-Scratch (Baseline)
 Concatenate clinical + diagnostic features:
-- $x_i = x_{i,b} \oplus x_{i,d}$
-- Trains directly on ESUS; simple but prone to overfitting in small-N, high-D.
+
+$$
+x_i = x_{i,b} \oplus x_{i,d}
+$$
+
+Trains directly on ESUS; simple but prone to overfitting in small-N, high-D.
 
 ### 2) Supervised Transfer
 Pre-train a **hypergraph transformer** on AI-RESPECT (labeled PSCI task) and transfer:
-- Learn final hyperedge embedding `x^L_{e,i}` as a **32-D patient vector**.
-- Build ESUS features by `x_i = x_{i,tr} ⊕ x_{i,b}` and train AF classifiers (LR/RF/GB).
-- Benefits: injects structure + priors from a large related cohort.
+
+$$
+x^{L}_{e,i} \in \mathbb{R}^{32}
+$$
+
+Build ESUS features by:
+
+$$
+x_i = x_{i,tr} \oplus x_{i,b}
+$$
+
+Then train AF classifiers (LR/RF/GB).  
+Benefits: injects structure + priors from a large related cohort.
 
 ### 3) Unsupervised Transfer
 Pre-train on AI-RESPECT **without labels** via two components, then transfer:
-- **Hypergraph View Augmentation (genSim):** 
-  - Node masking biased by duplication; hyperedge selection via **Gumbel-Softmax**.
-  - Consistency objectives across two augmented views: `L_genSim = L_hyper + L_sim`.
-- **Triplet Contrastive Learning (Trip):**
-  - **Node-level**, **hyperedge-level**, and **membership-level** contrasts across augmented graphs.
-  - Total loss: `L_total = L_genSim + L_n + L_e + L_m` (equal weights).
-- Extract a **32-D** patient embedding `x_{i,tr}` and concatenate with clinical features as above.
+
+**Hypergraph View Augmentation (genSim):**  
+Consistency objective across two augmented views:
+
+$$
+L_{\text{genSim}} = L_{\text{hyper}} + L_{\text{sim}}
+$$
+
+**Triplet Contrastive Learning (Trip):**  
+Total loss:
+
+$$
+L_{\text{total}} = L_{\text{genSim}} + L_n + L_e + L_m
+$$
+
+Extract a **32-D** patient embedding \(x_{i,tr}\) and concatenate with clinical features as above.
+
 
 <p align="center">
   <img src="assets/Framework.png" alt="Overview of Method" width="800"/>

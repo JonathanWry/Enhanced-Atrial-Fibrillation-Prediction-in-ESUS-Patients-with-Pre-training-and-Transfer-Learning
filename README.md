@@ -22,7 +22,7 @@ We represent patient data as a **hypergraph**: nodes = diagnostic features; hype
 
 ### 1) From-Scratch (Baseline)
 Concatenate clinical + diagnostic features:
-- `x_i = x_{i,b} ⊕ x_{i,d}`
+- $x_i = x_{i,b} \oplus x_{i,d}$
 - Trains directly on ESUS; simple but prone to overfitting in small-N, high-D.
 
 ### 2) Supervised Transfer

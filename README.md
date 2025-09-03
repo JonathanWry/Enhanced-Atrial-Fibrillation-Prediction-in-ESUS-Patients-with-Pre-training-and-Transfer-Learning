@@ -20,6 +20,8 @@ This repo explores **Atrial Fibrillation (AF) prediction** in **ESUS** patients 
 ## Method Overview
 We represent patient data as a **hypergraph**: nodes = diagnostic features; hyperedges = patient visits/encounters. We then learn **hyperedge (patient) embeddings** and transfer them to ESUS.
 
+![Overview of Method](assets/Framework.png)
+
 ### 1) From-Scratch (Baseline)
 Concatenate clinical + diagnostic features:
 - `x_i = x_{i,b} ⊕ x_{i,d}`

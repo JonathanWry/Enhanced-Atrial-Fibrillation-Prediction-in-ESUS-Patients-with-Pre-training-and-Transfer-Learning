@@ -49,7 +49,30 @@ Hypergraphs naturally capture **many-to-many** relations between features and vi
 - Produces compact, expressive **patient embeddings** for downstream AF prediction.
 
 ---
+## Data
 
+This project leverages **electronic health record (EHR)** data from the Emory Healthcare System, combining two cohorts for **pre-training** and **transfer learning**:
+
+- **ESUS Dataset (Target Cohort)**  
+  - 510 patients diagnosed with **Embolic Stroke of Undetermined Source (ESUS)** between *Jan 1, 2015 – Dec 13, 2023*  
+  - 107 developed **post-stroke AF** as a first occurrence  
+  - Inclusion criteria: ≥18 years old, no prior stroke within 5 years before 2015, and no history of AF before index stroke  
+  - Features:  
+    - **58 baseline clinical variables**: demographics, biomarkers, echocardiographic, ECG features, comorbidities  
+    - **1,529 diagnostic features**: 990 ICD-based + 539 medication-related  
+
+- **AI-RESPECT Dataset (Pre-training Cohort)**  
+  - 7,780 stroke patients diagnosed between *Jan 1, 2012 – Dec 31, 2021*  
+  - 1,735 developed **post-stroke cognitive impairment (PSCI)**  
+  - Inclusion criteria: stroke diagnosis with no prior history of cognitive impairment  
+  - Features: **2,595 diagnostic features**, broader coverage of stroke-related medical history  
+
+Across both datasets, **1,494 diagnostic features overlap**, covering 97.7% of ESUS diagnostic features, enabling effective pre-training transfer.
+
+> ⚠️ **Note:** Both ESUS and AI-RESPECT datasets are **institutional EHR data** and not publicly available due to patient privacy. Access requires proper institutional approvals and IRB clearance.  
+---
+## Project Structure
+---
 ## Usage
 
 ### Unsupervised Representation Learning for Hyperedges

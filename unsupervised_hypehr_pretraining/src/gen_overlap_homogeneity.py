@@ -127,7 +127,6 @@ class HyperDataset:
                 self.EDGE_LABELS.append(label)
 
 
-
 def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -244,7 +243,6 @@ def sparse_mx_to_torch_sparse_tensor(sparse_mx):
 
 def initialise(X, G):
     G = G.copy()
-    # N, M = X.shape[0], len(G)
     N = X.shape[0]
     M = 8000
     indptr, indices, data = [0], [], []

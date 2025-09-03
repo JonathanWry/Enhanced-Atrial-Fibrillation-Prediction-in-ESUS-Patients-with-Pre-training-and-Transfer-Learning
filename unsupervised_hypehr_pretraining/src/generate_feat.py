@@ -10,6 +10,7 @@ def seed_everything(seed=0):
     random.seed(seed)  
 
 def read_and_preprocess(file_path):
+    # Read hyperedge file and build an undirected graph
     with open(file_path, 'r') as file:
         content = file.read()
     edges = [line.split(',') for line in content.strip().split('\n')]
@@ -21,6 +22,7 @@ def read_and_preprocess(file_path):
     return G
 
 def perform_random_walks(graph, num_walks=10, walk_length=40):
+    # Perform uniform random walks starting from each node
     walks = []
     for node in list(graph.nodes):
         for _ in range(num_walks):
@@ -36,6 +38,7 @@ def perform_random_walks(graph, num_walks=10, walk_length=40):
     return walks
 
 def generate_embeddings(walks, vector_size=128, window=5, min_count=0, sg=1, workers=4, epochs=10):
+    # Train Word2Vec model on the generated random walks
     model = Word2Vec(sentences=walks, vector_size=vector_size, window=window, min_count=min_count, sg=sg, workers=workers, epochs=epochs)
     return model
 

@@ -64,7 +64,6 @@ def load_dataset(path='../data/raw_data/', dataset='your_dataset',
             if not lines:  # Skip empty lines
                 continue
             try:
-                # print(lines)
                 values = list(map(float, lines.split(" ")))
                 features[int(values[0])] = np.array(values[1:])
             except ValueError as e:
@@ -146,10 +145,21 @@ def load_dataset(path='../data/raw_data/', dataset='your_dataset',
 
 
 def save_data_to_pickle(data, p2root='../data/', file_name=None):
-    '''
-    if file name not specified, use time stamp.
-    '''
+    """
+    Save arbitrary Python object to a pickle file.
 
+    Args:
+        data (Any): Python object to be serialized.
+        p2root (str): Root directory where file will be stored. Defaults to '../data/'.
+        file_name (str, optional): Custom file name. If None, a default name is used.
+
+    Returns:
+        str: Full path to the saved pickle file.
+
+    Notes:
+        - Default file name is "Hypergraph_star_expansion_dataset".
+        - Creates the target directory if it does not exist.
+    """
     surfix = 'star_expansion_dataset'
     if file_name is None:
         tmp_data_name = '_'.join(['Hypergraph', surfix])
@@ -164,6 +174,28 @@ def save_data_to_pickle(data, p2root='../data/', file_name=None):
 
 
 class dataset_Hypergraph(InMemoryDataset):
+    """
+        A PyTorch Geometric InMemoryDataset for hypergraph data.
+
+        This dataset class handles loading raw hypergraph data, processing it,
+        and saving it in a format suitable for PyTorch Geometric.
+
+        Supported dataset names:
+            - mimic3
+            - cradle
+            - promote
+            - combine_icd3
+            - combine_icd4
+            - separate_* (custom datasets with 'separate_' prefix)
+
+        Args:
+            root (str): Root directory where the dataset will be stored.
+            name (str): Dataset name.
+            p2raw (str, optional): Path to the raw dataset.
+            transform (callable, optional): Data transform.
+            pre_transform (callable, optional): Pre-transform applied before saving.
+            num_nodes (int): Number of nodes in the dataset.
+        """
     def __init__(self, root='../data/pyg_data/hypergraph_dataset/', name=None,
                  p2raw=None, transform=None, pre_transform=None, num_nodes=7423):
 

@@ -1,12 +1,18 @@
 import os
-
-import os
 import argparse
 from tqdm import tqdm, trange
 import copy
 from sklearn.metrics import roc_auc_score, average_precision_score
 from sklearn.metrics import f1_score
 import random
+import csv
+from torch_geometric.typing import Adj, Size, OptTensor
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import Tensor
+from torch_scatter import scatter_add, scatter
+from itertools import permutations
 
 import min_norm_solvers
 from generate_hypergraph import HypergraphViewGenerator
@@ -49,6 +55,21 @@ from convert_datasets_to_pygDataset import dataset_Hypergraph
 
 def generate_multiple_splits(label, num_splits=5, train_prop=.5, valid_prop=.25, ignore_negative=False, balance=False,
                              rand_seed=0):
+    """
+       Create multiple (train/valid/test) index splits for cross-validation.
+
+       Args:
+           label (Tensor): Ground-truth labels.
+           num_splits (int): Number of splits to generate.
+           train_prop (float): Proportion of data for training (0–1).
+           valid_prop (float): Proportion of data for validation (0–1).
+           ignore_negative (bool): Whether to ignore negative labels when sampling.
+           balance (bool): Whether to balance classes when sampling.
+           rand_seed (int): Base seed; each split uses (base + split_id).
+
+       Returns:
+           dict[int, dict[str, Tensor]]: Mapping split_id → {'train','valid','test'} indices.
+       """
     data_splits = {}
 
     for split in range(num_splits):
@@ -59,7 +80,28 @@ def generate_multiple_splits(label, num_splits=5, train_prop=.5, valid_prop=.25,
 
 
 def pretrain(num_negs, tasks, weighted_method,view_gen1,view_gen2):
+    """
+      Pretraining routine combining contrastive/self-supervised tasks.
 
+      Trains the model (and optionally view generators) using a configurable
+      set of tasks: 'genSim' (view similarity), 'node' (node-level contrast),
+      'graph' (hyperedge/edge-level contrast), 'membership' (node↔edge links).
+      Supports Pareto MTL (min-norm) or weighted methods; otherwise sums losses.
+
+      Args:
+          num_negs: Negative sample count for contrastive terms (or None for default).
+          tasks (List[str]): Subset of {'genSim','node','graph','membership','supervised'}.
+          weighted_method: WeightMethods instance when args.weighted_methods=True.
+          view_gen1, view_gen2: Hypergraph view generators for 'genSim'.
+
+      Returns:
+          Tensor: Scalar pretraining loss (with graph retained until backward finishes).
+
+      Side Effects:
+          - Performs forward/backward and gradient clipping.
+          - When Pareto MTL: computes normalized gradients and min-norm weights.
+          - Uses global `model`, `data`, `args`, `criterion`, etc.
+      """
     loss_data = {}
     grads = {}
     model.zero_grad()
@@ -79,10 +121,9 @@ def pretrain(num_negs, tasks, weighted_method,view_gen1,view_gen2):
 
         node_mask1, edge_mask1 = valid_node_edge_mask(hyperedge_index1, args.num_nodes, data.totedges)
         node_mask2, edge_mask2 = valid_node_edge_mask(hyperedge_index2, args.num_nodes, data.totedges)
-        # node_mask2, edge_mask2 = valid_node_edge_mask(hyperedge_index2, args.num_nodes, args.num_edges)
+
         node_mask = node_mask1 & node_mask2
         edge_mask = edge_mask1 & edge_mask2
-        # edgeMaskShape = edge_mask.shape
 
         device = data.x.device
 
@@ -360,6 +401,16 @@ def get_used_parameters(losses, model):
 
 
 def drop_features(x: Tensor, p: float):
+    """
+       Randomly zeros a fraction of feature dimensions (column-wise dropout).
+
+       Args:
+           x (Tensor): Node feature matrix [N, F].
+           p (float): Drop probability per feature dimension (0–1).
+
+       Returns:
+           Tensor: Feature matrix with a subset of columns zeroed.
+       """
     device = x.device  # Get device from input tensor
     drop_mask = torch.empty((x.size(1),), dtype=torch.float32, device=device).uniform_(0, 1) < p
     x = x.clone().to(device)  # Ensure x is on the same device
@@ -368,10 +419,32 @@ def drop_features(x: Tensor, p: float):
 
 
 def filter_incidence(row: Tensor, col: Tensor, hyperedge_attr: OptTensor, mask: Tensor):
+    """
+       Mask rows of (row, col[, attr]) tuples for an incidence representation.
+
+       Args:
+           row (Tensor): Node indices per incidence.
+           col (Tensor): Edge indices per incidence.
+           hyperedge_attr (OptTensor): Optional per-incidence attributes.
+           mask (Tensor[bool]): Boolean mask for incidences.
+
+       Returns:
+           Tuple[Tensor, Tensor, OptTensor]: Filtered (row, col, attr).
+       """
     return row[mask], col[mask], None if hyperedge_attr is None else hyperedge_attr[mask]
 
 
 def drop_incidence(hyperedge_index: Tensor, p: float = 0.2):
+    """
+      Randomly drops individual incidences (node–edge links) from hyperedge_index.
+
+      Args:
+          hyperedge_index (Tensor[2, M]): Incidence list (row=node, col=edge).
+          p (float): Drop probability per incidence (0–1).
+
+      Returns:
+          Tensor[2, M’]: Incidences after random dropping.
+      """
     device = hyperedge_index.device  # Get device from input tensor
 
     if p == 0.0:
@@ -386,6 +459,18 @@ def drop_incidence(hyperedge_index: Tensor, p: float = 0.2):
 
 
 def drop_nodes(hyperedge_index: Tensor, num_nodes: int, num_edges: int, p: float):
+    """
+       Drops nodes at random and removes their incidences from the hypergraph.
+
+       Args:
+           hyperedge_index (Tensor[2, M]): Incidence list.
+           num_nodes (int): Total #nodes.
+           num_edges (int): Total #hyperedges.
+           p (float): Drop probability per node (0–1).
+
+       Returns:
+           Tensor[2, M’]: Incidences after node removal.
+       """
     device = hyperedge_index.device  # Get device from input tensor
 
     if p == 0.0:
@@ -404,6 +489,19 @@ def drop_nodes(hyperedge_index: Tensor, num_nodes: int, num_edges: int, p: float
 
 
 def drop_hyperedges(hyperedge_index: Tensor, num_nodes: int, num_edges: int, p: float):
+    """
+    Drops hyperedges at random and removes their incidences.
+
+    Args:
+        hyperedge_index (Tensor[2, M]): Incidence list.
+        num_nodes (int): Total #nodes.
+        num_edges (int): Total #hyperedges.
+        p (float): Drop probability per hyperedge (0–1).
+
+    Returns:
+        Tensor[2, M’]: Incidences after hyperedge removal.
+    """
+
     device = hyperedge_index.device  # Get device from input tensor
 
     if p == 0.0:
@@ -421,6 +519,19 @@ def drop_hyperedges(hyperedge_index: Tensor, num_nodes: int, num_edges: int, p: 
     return hyperedge_index
 
 def valid_node_edge_mask(hyperedge_index: Tensor, num_nodes: int, num_hyperedge: int):
+    """
+    Compute masks indicating which nodes/edges remain incident to something.
+
+    Args:
+        hyperedge_index (Tensor[2, M]): Incidence list.
+        num_nodes (int): Total #nodes.
+        num_hyperedge (int): Total #hyperedges.
+
+    Returns:
+        Tuple[Tensor(bool), Tensor(bool)]: (node_mask, edge_mask) of shape
+        [num_nodes], [num_hyperedge], True if degree > 0.
+    """
+
     device = hyperedge_index.device  # Get device from input tensor
     ones = hyperedge_index.new_ones(hyperedge_index.shape[1]).to(device)
 
@@ -432,6 +543,18 @@ def valid_node_edge_mask(hyperedge_index: Tensor, num_nodes: int, num_hyperedge:
 
 
 def common_node_edge_mask(hyperedge_indexs: list[Tensor], num_nodes: int, num_edges: int):
+    """
+    Intersect validity across multiple incidence sets.
+
+    Args:
+        hyperedge_indexs (List[Tensor]): Multiple incidence lists to compare.
+        num_nodes (int): Total #nodes.
+        num_edges (int): Total #hyperedges.
+
+    Returns:
+        Tuple[Tensor(bool), Tensor(bool)]: Nodes/edges that are valid in all views.
+    """
+
     device = hyperedge_indexs[0].device  # Get device from input tensor
     hyperedge_weight = hyperedge_indexs[0].new_ones(num_edges).to(device)
     node_mask = hyperedge_indexs[0].new_ones((num_nodes,)).to(torch.bool, device=device)
@@ -447,6 +570,20 @@ def common_node_edge_mask(hyperedge_indexs: list[Tensor], num_nodes: int, num_ed
 
 
 def hyperedge_index_masking(hyperedge_index, num_nodes, num_edges, node_mask, edge_mask):
+    """
+    Mask incidences by allowed node and edge sets.
+
+    Args:
+        hyperedge_index (Tensor[2, M]): Incidence list.
+        num_nodes (int): Total #nodes (unused but kept for API symmetry).
+        num_edges (int): Total #hyperedges (unused but kept for API symmetry).
+        node_mask (Tensor(bool) or None): Nodes to keep; None = keep all.
+        edge_mask (Tensor(bool) or None): Edges to keep; None = keep all.
+
+    Returns:
+        Tensor[2, M’]: Filtered incidence list with only allowed (node, edge) pairs.
+    """
+
     device = hyperedge_index.device  # Get device from input tensor
     if node_mask is None and edge_mask is None:
         return hyperedge_index
@@ -477,6 +614,18 @@ def hyperedge_index_masking(hyperedge_index, num_nodes, num_edges, node_mask, ed
 
 
 def clique_expansion(hyperedge_index: Tensor):
+    """
+    Convert hyperedges to a directed pairwise graph via clique expansion.
+
+    For each hyperedge, creates all ordered pairs (u, v), u != v, among its nodes.
+
+    Args:
+        hyperedge_index (Tensor[2, M]): Incidence list.
+
+    Returns:
+        Tensor[2, E]: Edge list of the expanded (directed) graph.
+    """
+
     edge_set = set(hyperedge_index[1].tolist())
     adjacency_matrix = []
     for edge in edge_set:
@@ -515,6 +664,27 @@ def seed_everything(seed=0):
 
 def GNN_evaluator(model, X, hyperedge_index, Y, test_idx, data, eval_func, epoch, method, args, mode='dev',
                   threshold=0.5):
+    """
+    Evaluate a trained model on a subset (e.g., validation or test).
+
+    Args:
+        model: Trained model.
+        X (Tensor): Node features (unused here; kept for API).
+        hyperedge_index (Tensor): Incidence list (unused here; kept for API).
+        Y (Tensor): Ground-truth labels.
+        test_idx (Tensor): Indices to evaluate on.
+        data: Full Data object passed into the model.
+        eval_func (callable): Dataset-specific metric function.
+        epoch (int): Current epoch (for logging).
+        method (str): Model name for logs.
+        args: Configuration (contains thresholds, etc.).
+        mode (str): Display tag ('dev' or 'test').
+        threshold (float): Sigmoid threshold to binarize predictions.
+
+    Returns:
+        Tuple[float, float, float, float]: (acc, auc, aupr, f1_macro).
+    """
+
     with torch.no_grad():
         model.eval()
         n_node, n_edge = torch.max(hyperedge_index[0]) + 1, torch.max(hyperedge_index[1]) + 1
@@ -540,6 +710,28 @@ def GNN_evaluator(model, X, hyperedge_index, Y, test_idx, data, eval_func, epoch
 
 @torch.no_grad()
 def evaluate(model, data, split_idx, eval_func, epoch, method, dname, args):
+    """
+    Full evaluation over G, G' (factual), and G-G' (counterfactual) views.
+
+    Uses the main model (and optionally a learned view_learner) to compute
+    predictions on original, augmented, and complementary graphs, and then
+    logs metrics for validation/test splits.
+
+    Args:
+        model: Trained model.
+        data: PyG Data object.
+        split_idx (dict): {'train','valid','test'} index tensors.
+        eval_func (callable): Metric function (mimic3/cradle specific).
+        epoch (int): Current epoch.
+        method (str): Model name for logs.
+        dname (str): Dataset name.
+        args: Configuration with control flags.
+
+    Returns:
+        16-tuple of floats: metrics for (G, G', G-G') on valid and test sets.
+    """
+
+
     valid_acc_gf = valid_auc_gf = valid_aupr_gf = valid_f1_macro_gf = \
         test_acc_gf = test_auc_gf = test_aupr_gf = test_f1_macro_gf = \
         valid_acc_gcf = valid_auc_gcf = valid_aupr_gcf = valid_f1_macro_gcf = \
@@ -618,6 +810,20 @@ def evaluate(model, data, split_idx, eval_func, epoch, method, dname, args):
 
 
 def get_subset_ranking(edge_weight, edge_index, num_hyperedges, args):
+    """
+      Rank node incidences per hyperedge by learned edge weights and save lists.
+
+      Produces two files under `outputs/`:
+          - remained_output_*: top-k kept nodes per hyperedge
+          - deleted_output_*: remaining nodes per hyperedge
+      where k = ceil(len(hyperedge) * remain_percentage) (min 5 if possible).
+
+      Args:
+          edge_weight (Tensor): Learned edge importance per incidence.
+          edge_index (Tensor[2, M]): Incidence list.
+          num_hyperedges (int): Number of hyperedges.
+          args: Config with remain_percentage, method, dname, vanilla flag.
+      """
     edge_index_clone = edge_index.clone().detach().to('cpu').numpy()
     edge_weight_clone = edge_weight.reshape(1, -1).clone().detach().to('cpu').numpy()
     index_weight_concat = np.concatenate((edge_index_clone, edge_weight_clone), axis=0)
@@ -651,6 +857,22 @@ def get_subset_ranking(edge_weight, edge_index, num_hyperedges, args):
 
 
 def eval_mimic3(y_true, y_pred, epoch, method, args, mode='dev', threshold=0.5):
+    """
+    Compute multilabel metrics for MIMIC-III style tasks.
+
+    Args:
+        y_true (Tensor): Ground-truth labels (N × L).
+        y_pred (Tensor): Sigmoid probabilities (N × L).
+        epoch (int): Current epoch (logged to CSV).
+        method (str): Model name tag for logs.
+        args: Config with num_labels.
+        mode (str): 'dev' or 'test'.
+        threshold (float): Binarization threshold for y_pred.
+
+    Returns:
+        Tuple[float, float, float, float]: (accuracy, ROC-AUC, AUPR, F1-macro).
+    """
+
     acc_list = []
     y_true = y_true.detach().cpu().numpy()
     y_pred = y_pred.detach().cpu().numpy()
@@ -684,7 +906,6 @@ def eval_mimic3(y_true, y_pred, epoch, method, args, mode='dev', threshold=0.5):
         total_aupr.append(aupr)
     aupr = average_precision_score(y_true.reshape(-1), y_pred.reshape(-1))
 
-    import csv
     with open(f'outputs/mimic3_{mode}_{method}.csv', 'a+', encoding='utf-8') as f:
         writer = csv.writer(f, delimiter='\t')
         writer.writerow(["Epoch", "Phenotype", "acc", "auc", 'aupr', 'f1'])
@@ -696,6 +917,22 @@ def eval_mimic3(y_true, y_pred, epoch, method, args, mode='dev', threshold=0.5):
 
 
 def eval_cradle(y_true, y_pred, epoch, method, args, mode='dev', threshold=0.5):
+    """
+    Compute binary metrics for CRADLE/PROMOTE style tasks.
+
+    Args:
+        y_true (Tensor): Ground-truth labels.
+        y_pred (Tensor): Sigmoid probabilities.
+        epoch (int): Current epoch.
+        method (str): Model name tag.
+        args: Config object (unused here).
+        mode (str): 'dev' or 'test'.
+        threshold (float): Binarization threshold.
+
+    Returns:
+        Tuple[float, float, float, float]: (accuracy, ROC-AUC, AUPR, F1-macro).
+    """
+
     y_true = y_true.detach().cpu().numpy()
     y_pred = y_pred.detach().cpu().numpy()
 

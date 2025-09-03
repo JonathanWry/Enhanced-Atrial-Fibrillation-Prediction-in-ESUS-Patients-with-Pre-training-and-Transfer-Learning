@@ -36,7 +36,6 @@ def delete_hyperedge(reserve_id, H):
 class HypergraphViewGenerator(torch.nn.Module):
     def __init__(self,in_dim,out_dim,head=2, dropout=0.6):
         super().__init__()
-        # self.encoder = nn.ModuleList([HypergraphConv(in_dim, in_dim//2, head=head, droupout=dropout), HypergraphConv(in_dim//2,out_dim,head=head,dropout=dropout)])
         self.encoder = nn.ModuleList([
             HypergraphConv(in_dim, in_dim // 2, dropout=dropout),
             HypergraphConv(in_dim // 2, out_dim, dropout=dropout)
@@ -51,22 +50,27 @@ class HypergraphViewGenerator(torch.nn.Module):
         # Augmentation for edges based on overlap
         sel_mask = aug_node(data.overlap, args, device)
 
-
+        # Encode node features via hypergraph convolutions
         for m in self.encoder:
             X = m(X,edge_index)
+
+        # Aggregate node features to edge features (mean over incident nodes)
         Xve = X[edge_index[0]]
         Xe = scatter(Xve, edge_index[1], dim = 0,reduce = 'mean') #|E|*3
         Xe = normalize_l2(torch.sigmoid(Xe))
 
+        # Gumbel-softmax sampling over edge states
         sample = F.gumbel_softmax(Xe, hard=True)
 
+        # State indices: reserve (0), ..., mask (2)
         reserve = sample[:, 0].bool()
         mask = sample[:, 2].bool()
 
-
+        # Combine edge-level and node-level masks
         reserve_sample = reserve[edge_index[1]]
         mask_sample = torch.logical_and(mask[edge_index[1]], sel_mask[edge_index[0]].to(device))
         final_sample = reserve_sample | mask_sample
 
+        # Subselect edges by final mask
         edge_index = edge_index[:, final_sample]
         return final_sample.float(), edge_index

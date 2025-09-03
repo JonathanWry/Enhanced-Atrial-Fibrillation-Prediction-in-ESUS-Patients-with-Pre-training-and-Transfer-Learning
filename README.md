@@ -11,8 +11,8 @@ This repo explores **Atrial Fibrillation (AF) prediction** in **ESUS** patients 
 
 - **Challenges:** small target cohort, high-dimensional diagnostic features (ICD), risk of overfitting.
 - **Inputs:** 
-  - Baseline clinical features (58 dims)
-  - Diagnostic features (ICD; up to 1,529 dims for ESUS)
+- Baseline clinical features (58 dims)
+- Diagnostic features (ICD; up to 1,529 dims for ESUS)
 - **Output:** AF risk (0/1)
 
 ---
@@ -22,54 +22,30 @@ We represent patient data as a **hypergraph**: nodes = diagnostic features; hype
 
 ### 1) From-Scratch (Baseline)
 Concatenate clinical + diagnostic features:
-
-$$
-x_i = x_{i,b} \oplus x_{i,d}
-$$
-
-Trains directly on ESUS; simple but prone to overfitting in small-N, high-D.
+- `x_i = x_{i,b} ⊕ x_{i,d}`
+- Trains directly on ESUS; simple but prone to overfitting in small-N, high-D.
 
 ### 2) Supervised Transfer
 Pre-train a **hypergraph transformer** on AI-RESPECT (labeled PSCI task) and transfer:
-
-$$
-x^{L}_{e,i} \in \mathbb{R}^{32}
-$$
-
-Build ESUS features by:
-
-$$
-x_i = x_{i,tr} \oplus x_{i,b}
-$$
-
-Then train AF classifiers (LR/RF/GB).  
-Benefits: injects structure + priors from a large related cohort.
+- Learn final hyperedge embedding `x^L_{e,i}` as a **32-D patient vector**.
+- Build ESUS features by `x_i = x_{i,tr} ⊕ x_{i,b}` and train AF classifiers (LR/RF/GB).
+- Benefits: injects structure + priors from a large related cohort.
 
 ### 3) Unsupervised Transfer
 Pre-train on AI-RESPECT **without labels** via two components, then transfer:
-
-**Hypergraph View Augmentation (genSim):**  
-Consistency objective across two augmented views:
-
-$$
-L_{\text{genSim}} = L_{\text{hyper}} + L_{\text{sim}}
-$$
-
-**Triplet Contrastive Learning (Trip):**  
-Total loss:
-
-$$
-L_{\text{total}} = L_{\text{genSim}} + L_n + L_e + L_m
-$$
-
-Extract a **32-D** patient embedding \(x_{i,tr}\) and concatenate with clinical features as above.
-
+- **Hypergraph View Augmentation (genSim):** 
+- Node masking biased by duplication; hyperedge selection via **Gumbel-Softmax**.
+- Consistency objectives across two augmented views: `L_genSim = L_hyper + L_sim`.
+- **Triplet Contrastive Learning (Trip):**
+- **Node-level**, **hyperedge-level**, and **membership-level** contrasts across augmented graphs.
+- Total loss: `L_total = L_genSim + L_n + L_e + L_m` (equal weights).
+- Extract a **32-D** patient embedding `x_{i,tr}` and concatenate with clinical features as above.
 
 <p align="center">
   <img src="assets/Framework.png" alt="Overview of Method" width="800"/>
 </p>
 <p align="center">
-  <em>Overview of our proposed framework for AF prediction in ESUS patients</em>
+<em>Overview of our proposed framework for AF prediction in ESUS patients</em>
 </p>
 
 ---
@@ -85,18 +61,18 @@ Hypergraphs naturally capture **many-to-many** relations between features and vi
 This project leverages **electronic health record (EHR)** data from the Emory Healthcare System, combining two cohorts for **pre-training** and **transfer learning**:
 
 - **ESUS Dataset (Target Cohort)**  
-  - 510 patients diagnosed with **Embolic Stroke of Undetermined Source (ESUS)** between *Jan 1, 2015 – Dec 13, 2023*  
-  - 107 developed **post-stroke AF** as a first occurrence  
-  - Inclusion criteria: ≥18 years old, no prior stroke within 5 years before 2015, and no history of AF before index stroke  
-  - Features:  
-    - **58 baseline clinical variables**: demographics, biomarkers, echocardiographic, ECG features, comorbidities  
-    - **1,529 diagnostic features**: 990 ICD-based + 539 medication-related  
+- 510 patients diagnosed with **Embolic Stroke of Undetermined Source (ESUS)** between *Jan 1, 2015 – Dec 13, 2023*  
+- 107 developed **post-stroke AF** as a first occurrence  
+- Inclusion criteria: ≥18 years old, no prior stroke within 5 years before 2015, and no history of AF before index stroke  
+- Features:  
+- **58 baseline clinical variables**: demographics, biomarkers, echocardiographic, ECG features, comorbidities  
+- **1,529 diagnostic features**: 990 ICD-based + 539 medication-related  
 
 - **AI-RESPECT Dataset (Pre-training Cohort)**  
-  - 7,780 stroke patients diagnosed between *Jan 1, 2012 – Dec 31, 2021*  
-  - 1,735 developed **post-stroke cognitive impairment (PSCI)**  
-  - Inclusion criteria: stroke diagnosis with no prior history of cognitive impairment  
-  - Features: **2,595 diagnostic features**, broader coverage of stroke-related medical history  
+- 7,780 stroke patients diagnosed between *Jan 1, 2012 – Dec 31, 2021*  
+- 1,735 developed **post-stroke cognitive impairment (PSCI)**  
+- Inclusion criteria: stroke diagnosis with no prior history of cognitive impairment  
+- Features: **2,595 diagnostic features**, broader coverage of stroke-related medical history  
 
 Across both datasets, **1,494 diagnostic features overlap**, covering 97.7% of ESUS diagnostic features, enabling effective pre-training transfer.
 
@@ -122,11 +98,10 @@ After generating features, compute overlapness and homogeneity metrics:
 #### Step 3: Low-Dimensional Representation
 Once the overlapness and homogeneity files are ready, run the training scripts to obtain low-dimensional hyperedge feature representations:
 - **Scripts**:
-  - `spicd3.sh` – train on **separate ICD-3** dataset
-  - `spicd4.sh` – train on **separate ICD-4** dataset
-  - `cbicd3.sh` – train on **combined ICD-3** dataset
-  - `cbicd4.sh` – train on **combined ICD-4** dataset
+- `spicd3.sh` – train on **separate ICD-3** dataset
+- `spicd4.sh` – train on **separate ICD-4** dataset
+- `cbicd3.sh` – train on **combined ICD-3** dataset
+- `cbicd4.sh` – train on **combined ICD-4** dataset
 - **Description**: Each script calls the transfer learning framework to pretrain and fine-tune on hypergraph datasets, producing compressed representations of hyperedge features.
 
 ---
-

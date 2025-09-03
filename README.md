@@ -42,7 +42,7 @@ Pre-train on AI-RESPECT **without labels** via two components, then transfer:
 - Extract a **32-D** patient embedding `x_{i,tr}` and concatenate with clinical features as above.
 
 <p align="center">
-  <img src="assets/Framework.png" alt="Overview of Method" width="1200"/>
+  <img src="assets/Framework.png" alt="Overview of Method" width="800"/>
 </p>
 <p align="center">
   <em>Overview of our proposed framework for AF prediction in ESUS patients</em>

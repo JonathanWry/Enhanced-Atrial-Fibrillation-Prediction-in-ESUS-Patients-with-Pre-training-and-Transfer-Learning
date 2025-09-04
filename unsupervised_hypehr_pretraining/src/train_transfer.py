@@ -1,5 +1,96 @@
-import os
+"""
+======================================================================================
+Main Training Script: Hypergraph Pretraining + Formal Training Pipeline
+======================================================================================
 
+Purpose
+-------
+End-to-end experimental pipeline for **hypergraph neural networks** with:
+   • Self-supervised pretraining (contrastive + generative tasks)
+   • Factual/counterfactual view learning (CACHE framework)
+   • Formal supervised training (multi-label / binary classification)
+
+Key Components
+--------------
+• generate_multiple_splits(label, num_splits, …)
+    Create train/valid/test splits for k-fold cross-validation.
+
+• pretrain(num_negs, tasks, weighted_method, view_gen1, view_gen2)
+    Multi-task pretraining across tasks:
+        - genSim: similarity between stochastic hypergraph views
+        - node: node-level contrastive loss
+        - graph: hyperedge-level contrastive loss
+        - membership: node–edge incidence prediction
+    Supports Pareto multi-task learning (min-norm solvers) and weighted methods.
+
+• drop_features / drop_incidence / drop_nodes / drop_hyperedges
+    Randomized augmentations for self-supervised contrastive pretraining.
+
+• valid_node_edge_mask / common_node_edge_mask / hyperedge_index_masking
+    Mask construction and filtering to ensure valid subgraphs across augmentations.
+
+• clique_expansion
+    Expand each hyperedge into a fully connected clique over its nodes.
+
+• parse_method(args, data)
+    Build model architecture: SimpleHypergraphModel or SetGNN variants.
+
+• seed_everything(seed)
+    Enforce deterministic runs across numpy/torch/random.
+
+• GNN_evaluator / evaluate
+    Evaluate model on vanilla, factual, and counterfactual views.
+    Return Accuracy, ROC-AUC, AUPR, and F1 scores.
+
+• get_subset_ranking
+    Rank node incidences per hyperedge using learned weights;
+    save top-k remained vs. deleted sets.
+
+• eval_mimic3 / eval_cradle
+    Dataset-specific metrics:
+       - MIMIC-III: multilabel metrics (per phenotype + macro scores)
+       - CRADLE / PROMOTE: binary classification metrics
+
+Workflow
+--------
+1. **Dataset loading & preprocessing**
+   - Convert raw hyperedges to PyG Data
+   - Optional self-loops & normalization
+   - Generate train/valid/test splits
+
+2. **Pretraining phase**
+   - Train on self-supervised tasks (contrastive/genSim/membership)
+   - Learn edge/node embeddings
+   - Save best representations to disk
+
+3. **Formal training phase (optional)**
+   - Supervised fine-tuning with vanilla or CACHE framework
+   - CACHE jointly optimizes factual and counterfactual predictions
+   - Early stopping and best checkpointing by validation AUC
+
+4. **Evaluation**
+   - Report metrics on validation/test sets
+   - Save logs and best edge/node representations
+
+Dependencies
+------------
+torch, torch_geometric, torch_scatter, sklearn, tqdm, numpy
+Custom modules: generate_hypergraph, models, preprocessing,
+convert_datasets_to_pygDataset, min_norm_solvers, weight_methods
+
+Notes
+-----
+• Supports multiple datasets (MIMIC-III, CRADLE, PROMOTE, ICD variants).
+• Highly configurable via argparse flags.
+• Outputs include edge/node embeddings, evaluation logs, and performance stats.
+
+Usage:
+python -u train_transfer.py --Pdname=dataset1 --dname=dataset2 --epochs=600 --cuda=1 --num_labels=1 --Pnum_nodes=num_node1 --num_nodes=num_node2 --num_labeled_data=all --All_num_layers 3 --cuda=1 --feature_dim=128 --heads=4 --MLP_num_layers 2 --MLP_hidden 32 --model_lambda=0.01 --vanilla --pretrain_epoch=100 --pretrain_lr=1.0e-03 --pretrain_weight_decay=1.0e-06 --pretrain_drop_feature_rate=0.1 --pretrain_drop_incidence_rate=0.1 --pretrain_tau_n=0.3 --pretrain_tau_g=0.3 --pretrain_tau_m=2 --pretrain_w_gS=1 --pretrain_w_g=1 --pretrain_w_m=1 --pretrain_ng_batch_size=2048 --pretrain_m_batch_size=4096 --train_percentage=1.0  --pretrain=True
+
+
+"""
+
+import os
 import argparse
 import csv
 from tqdm import tqdm, trange
@@ -97,6 +188,11 @@ def pretrain(num_negs, tasks, weighted_method, view_gen1, view_gen2):
     masked_index1 = None
     masked_index2 = None
     if any(task in tasks for task in ['node', 'membership', 'graph']):
+        # --------------------------------------------------------------
+        # Create two stochastic graph views by (1) dropping incidences
+        # and (2) dropping node features. Then compute valid node/edge
+        # masks to ensure both views share comparable supports.
+        # --------------------------------------------------------------
         hyperedge_index1 = drop_incidence(hyperedge_index, args.pretrain_drop_incidence_rate)
         hyperedge_index2 = drop_incidence(hyperedge_index, args.pretrain_drop_incidence_rate)
         x1 = drop_features(features, args.pretrain_drop_feature_rate)

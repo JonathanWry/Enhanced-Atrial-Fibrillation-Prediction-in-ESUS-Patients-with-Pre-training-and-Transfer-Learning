@@ -1,3 +1,35 @@
+"""
+===============================================================================
+Minimum-Norm solver
+===============================================================================
+
+-------
+Compute convex task weights that minimize the ℓ2-norm of the weighted gradient
+in multi-task learning. Provides:
+  • MinNormSolver.find_min_norm_element
+  • MinNormSolver.find_min_norm_element_FW
+  • gradient_normalizers
+
+Core API
+--------
+1) MinNormSolver.find_min_norm_element(vecs) -> (w, cost)
+   - 2D closed-form init + projected gradient on the simplex.
+   - vecs: List[List[Tensor]], where vecs[i] is task i’s gradient split per
+     parameter tensor (matching shapes across tasks).
+   - Returns w (np.ndarray, w≥0, sum=1) and objective value `cost` (float).
+
+2) MinNormSolver.find_min_norm_element_FW(vecs) -> (w, cost)
+   - 2D init + Frank–Wolfe iterations on the simplex.
+   - Same input/output contract as above.
+
+3) gradient_normalizers(grads, losses, normalization_type) -> Dict[str, Tensor]
+   - grads: Dict[str, List[Tensor]] per-task grads (per-parameter).
+   - losses: Dict[str, Tensor] current task losses.
+   - normalization_type ∈ {'l2','loss','loss+','none'}
+   - Returns per-task scaling factors gn[t] for gradient balancing.
+"""
+
+
 import enum
 import numpy as np
 import torch

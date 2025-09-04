@@ -1,5 +1,18 @@
 """
-This script contains layers used in AllSet and all other tested methods.
+=====================================================================
+AllSet Layers: PMA, MLP, HalfNLHconv (PyG/Hypergraph building blocks)
+=====================================================================
+
+File
+----
+layers.py  (paste this header at the top of the file)
+
+Purpose
+-------
+Reusable layers for hypergraph/set-based models (e.g., AllSet variants):
+  • PMA  : Pooling by Multihead Attention over bipartite incidence graphs
+  • MLP  : Lightweight MLP with optional BN/LN & input normalization
+  • HalfNLHconv : Half “Node→Edge/Edge→Node” block with optional attention
 """
 
 import math
@@ -36,7 +49,7 @@ class PMA(MessagePassing):
     """
         PMA part:
         Note that in original PMA, we need to compute the inner product of the seed and neighbor nodes.
-        i.e. e_ij = a(Wh_i,Wh_j), where a should be the inner product, h_i is the seed and h_j are neightbor nodes.
+        i.e. e_ij = a(Wh_i,Wh_j), where a should be the inner product, h_i is the seed and h_j are neighbor nodes.
         In GAT, a(x,y) = a^T[x||y]. We use the same logic.
     """
     _alpha: OptTensor
@@ -44,7 +57,6 @@ class PMA(MessagePassing):
     def __init__(self, in_channels, hid_dim,
                  out_channels, num_layers, heads=1, concat=True,
                  negative_slope=0.2, dropout=0.0, bias=False, **kwargs):
-        #         kwargs.setdefault('aggr', 'add')
         super(PMA, self).__init__(node_dim=0, **kwargs)
 
         self.in_channels = in_channels
@@ -67,7 +79,7 @@ class PMA(MessagePassing):
                        num_layers=num_layers,
                        dropout=.0, Normalization='None', )
         self.ln0 = nn.LayerNorm(self.heads * self.hidden)
-        self.ln1 = nn.LayerNorm(self.heads * self.hidden
+        self.ln1 = nn.LayerNorm(self.heads * self.hidden)
         self.register_parameter('bias', None)
 
         self._alpha = None

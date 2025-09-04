@@ -1,3 +1,47 @@
+"""
+============================================================
+Random Walks + Word2Vec: Node Embedding Generator
+============================================================
+Builds node embeddings from a hyperedge file by:
+  • Converting each hyperedge (comma-separated node list) into a simple graph
+  • Running uniform random walks on the graph
+  • Training a Word2Vec model on the walk sequences
+  • Saving embeddings in text format compatible with downstream loaders
+
+------------------------------------------------------------
+Pipeline
+  1) Read hyperedges-*.txt  → undirected graph (cliques per hyperedge)
+  2) Perform N random walks per node (length L)
+  3) Train Word2Vec (skip-gram) on walk sequences
+  4) Write "<num_nodes> <dim>" header + "<node> <dim_values...>" per line
+
+------------------------------------------------------------
+Inputs (CLI)
+  --data_dir       Directory containing the hyperedge file
+  --input_file     Hyperedge file name (e.g., hyperedges-mimic4.txt)
+  --output_file    Output embeddings file (text)
+  --seed           RNG seed (default: 0)
+  --num_walks      Walks per node (default: 10)
+  --walk_length    Steps per walk (default: 40)
+  --vector_size    Embedding dimension (default: 128)
+  --window         Word2Vec context window (default: 5)
+  --epochs         Word2Vec epochs (default: 10)
+  --workers        Word2Vec worker threads (default: 4)
+
+------------------------------------------------------------
+Usage:
+    python generate_feat.py \
+      --data_dir path_to_dataset \
+      --input_file path_to_hyperedges.txt \
+      --output_file path_to_node-embeddings-dataset.txt \
+      --seed 0 \
+      --num_walks 10 \
+      --walk_length 40 \
+      --vector_size 128 \
+      --window 5 \
+      --epochs 10
+"""
+
 import argparse
 
 import networkx as nx

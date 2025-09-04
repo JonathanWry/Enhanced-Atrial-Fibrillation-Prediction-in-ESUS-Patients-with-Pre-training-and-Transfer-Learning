@@ -1,8 +1,57 @@
+"""
+===============================================================================
+Hypergraph Neural Network Models (SetGNN, SimpleHypergraphModel, ViewLearner)
+===============================================================================
+
+File
+----
+models.py   (paste this header at the top of the file)
+
+Purpose
+-------
+Collection of hypergraph-based GNN architectures and contrastive losses used in
+our paper. Includes:
+
+  • SetGNN
+      Alternating V→E and E→V message passing with optional Jumping Knowledge,
+      normalization, and hyperedge/node-level contrastive pretraining losses.
+
+  • SimpleHypergraphModel
+      Minimal 2-layer HypergraphConv encoder + MLP classifier for hyperedge
+      prediction. Useful as a lightweight baseline.
+
+  • ViewLearner
+      Learns edge dropout/retention logits conditioned on encoder outputs for
+      contrastive view generation.
+
+Core API
+--------
+1) SetGNN(args, data, norm=None)
+   - forward(data, …) -> (edge_score, edge_feat, node_feat, aux)
+   - pretrain_forward(…) -> Dict[str, Tensor] of task losses
+   - Includes node-level, edge-level, membership-level contrastive objectives.
+
+2) SimpleHypergraphModel(in_dim, hidden_dim, out_dim, num_labels)
+   - forward(data, …) -> (edge_scores, edge_embs, node_embs, aux)
+   - Provides loss functions for node/edge contrast and membership-level tasks.
+
+3) ViewLearner(encoder, input_dim, viewer_hidden_dim=64)
+   - forward(data, device) -> edge logits aligned with edge_index
+   - Used to parameterize edge masking for augmented views.
+
+Dependencies
+------------
+• PyTorch, torch_geometric (MessagePassing, HypergraphConv, scatter ops)
+• scikit-learn (KMeans for clustering in pretraining)
 
 """
-This script contains all models in our paper.
-"""
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import Tensor
+from typing import Optional
+from torch.nn import Linear, Parameter
 from sklearn.cluster import KMeans
 from torch_geometric.nn.conv import MessagePassing, GCNConv, GATConv
 import math
@@ -15,16 +64,25 @@ from layers import *
 
 
 class SetGNN(nn.Module):
+    """
+    SetGNN: Alternating V→E and E→V message passing over a hypergraph incidence.
+    Produces (hyper)edge and node embeddings + a classifier for hyperedge scores.
+
+    Expects:
+      - data.x: [|V|, d_in] node features
+      - data.edge_index: [2, |I|] incidence (row: nodes, col: hyperedges; 0-based IDs)
+      - data.norm: optional incidence weights aligned with edge_index
+
+    Args of interest:
+      - All_num_layers: # of E↔V alternating blocks (≥1 recommended)
+      - MLP_hidden / _num_layers: width/depth of HalfNLHconv inner MLPs
+      - Classifier_hidden / _num_layers: hyperedge classifier head
+      - aggregate: 'mean' or 'sum' for scatter aggregation
+    """
+
+
     def __init__(self, args, data, norm=None):
         super(SetGNN, self).__init__()
-        """
-        args should contain the following:
-        V_in_dim, V_enc_hid_dim, V_dec_hid_dim, V_out_dim, V_enc_num_layers, V_dec_num_layers
-        E_in_dim, E_enc_hid_dim, E_dec_hid_dim, E_out_dim, E_enc_num_layers, E_dec_num_layers
-        All_num_layers,dropout
-        !!! V_in_dim should be the dimension of node features
-        !!! E_out_dim should be the number of classes (for classification)
-        """
 
         self.All_num_layers = args.All_num_layers
         self.dropout = args.dropout
@@ -32,6 +90,10 @@ class SetGNN(nn.Module):
         self.NormLayer = args.normalization
         self.InputNorm = True
         self.LearnFeat = args.LearnFeat
+        # Stacks of alternating message passing:
+        # V2EConvs: aggregate node -> hyperedge
+        # E2VConvs: aggregate hyperedge -> node
+        # BatchNorms are paired with each stage.
 
         self.V2EConvs = nn.ModuleList()
         self.E2VConvs = nn.ModuleList()
@@ -214,6 +276,25 @@ class SetGNN(nn.Module):
 
     def __loss(self, z1: Tensor, z2: Tensor, tau: float, batch_size: Optional[int],
                num_negs: Optional[int], mean: bool):
+        """
+        Symmetric contrastive loss wrapper.
+
+        Computes an InfoNCE-style loss in both directions (z1→z2 and z2→z1),
+        using either full in-batch negatives (`__semi_loss`) or a batched
+        variant (`__semi_loss_batch`) depending on arguments.
+
+        Args:
+            z1 (Tensor): First embedding set (N, D).
+            z2 (Tensor): Second embedding set (N, D).
+            tau (float): Temperature (>0) for similarity scaling.
+            batch_size (Optional[int]): If set, uses batched negatives.
+            num_negs (Optional[int]): If set, samples K negatives per anchor.
+                Note: when `num_negs` is not None, the full-matrix path is used.
+            mean (bool): If True, mean-reduce across samples; else sum.
+
+        Returns:
+            Tensor: Scalar loss (mean/sum over samples).
+        """
         if batch_size is None or num_negs is not None:
             l1 = self.__semi_loss(z1, z2, tau, num_negs)
             l2 = self.__semi_loss(z2, z1, tau, num_negs)
@@ -226,6 +307,25 @@ class SetGNN(nn.Module):
         return loss
 
     def __semi_loss(self, h1: Tensor, h2: Tensor, tau: float, num_negs: Optional[int]):
+        """
+        Compute an InfoNCE-style contrastive loss between two embedding sets.
+
+        Args:
+            h1 (Tensor): Anchor embeddings of shape (N, D).
+            h2 (Tensor): Positive/negative pool embeddings of shape (N, D).
+            tau (float): Temperature for softmax scaling (> 0).
+            num_negs (Optional[int]): If None, use full in-batch negatives (full matrix).
+                If an integer K is provided, sample K negative permutations of h2.
+
+        Returns:
+            Tensor: Per-sample loss vector of shape (N,).
+
+        Notes:
+            - Uses cosine similarity, exponentiated and scaled by tau.
+            - Full negatives path forms a (N×N) similarity matrix; diagonal is positive.
+            - Sampled negatives path draws K permuted copies of h2 for each anchor.
+            - Raises ValueError when NaN/Inf is detected in inputs.
+        """
         if torch.isnan(h1).any() or torch.isnan(h2).any():
             raise ValueError("NaN values detected in h1 or h2 before normalization.")
         if torch.isinf(h1).any() or torch.isinf(h2).any():
@@ -243,6 +343,23 @@ class SetGNN(nn.Module):
             return -torch.log(pos_sim / (pos_sim + neg_sim.sum(1)))
 
     def __semi_loss_batch(self, h1: Tensor, h2: Tensor, tau: float, batch_size: int):
+        """
+        Batched variant of __semi_loss with full in-batch negatives.
+
+        Args:
+            h1 (Tensor): Anchor embeddings of shape (N, D).
+            h2 (Tensor): Positive/negative pool embeddings of shape (N, D).
+            tau (float): Temperature for softmax scaling (> 0).
+            batch_size (int): Mini-batch size for anchors (rows of h1).
+
+        Returns:
+            Tensor: Concatenated per-sample loss vector of shape (N,).
+
+        Notes:
+            - For each batch of anchors, computes similarity to all rows of h2.
+            - Positive for row i is column i within the current batch window.
+            - Performs numerical checks for zero vectors and NaN/Inf values.
+        """
         if torch.isnan(h1).any() or torch.isnan(h2).any():
             raise ValueError("NaN values detected in h1 or h2 before normalization.")
         if torch.isinf(h1).any() or torch.isinf(h2).any():
@@ -257,8 +374,7 @@ class SetGNN(nn.Module):
             mask = indices[i * batch_size: (i + 1) * batch_size]
             if torch.any(torch.norm(h1[mask], dim=1) == 0) or torch.any(torch.norm(h2, dim=1) == 0):
                 raise ValueError("Zero vectors detected in h1 or h2 before cosine similarity.")
-            # print("h1[mask] min:", h1[mask].min().item(), "max:", h1[mask].max().item())
-            # print("h2 min:", h2.min().item(), "max:", h2.max().item())
+
             between_sim = self.f(self.cosine_similarity(h1[mask], h2), tau)
 
             loss = -torch.log(between_sim[:, i * batch_size: (i + 1) * batch_size].diag() / between_sim.sum(1))
@@ -266,6 +382,19 @@ class SetGNN(nn.Module):
         return torch.cat(losses)
 
     def f(self, x, tau):
+        """
+       Temperature-scaled exponential used in contrastive scoring.
+
+       Args:
+           x (Tensor): Similarity scores (any shape), typically cosine similarities.
+           tau (float): Temperature (> 0). Smaller tau sharpens the distribution.
+
+       Returns:
+           Tensor: exp(x / tau), same shape as x.
+
+       Raises:
+           ValueError: If tau == 0 or x contains NaN/Inf.
+       """
         if tau == 0:
             raise ValueError("Tau cannot be zero in the exponential function.")
         if torch.isnan(x).any() or torch.isinf(x).any():
@@ -292,6 +421,21 @@ class SetGNN(nn.Module):
         return torch.mm(z1, z2.t())
 
     def cal_loss(self, z1: torch.Tensor, z2: torch.Tensor):
+        """
+        Row-wise InfoNCE numerator/denominator with temperature (tau=0.5).
+
+        Builds a contrastive objective using:
+          - refl_sim: similarities within z1 (self-similarity matrix)
+          - between_sim: similarities between z1 (rows) and z2 (cols)
+        The positive for row i is column i; all other columns are negatives.
+
+        Args:
+            z1 (Tensor): Embeddings A of shape (N, D).
+            z2 (Tensor): Embeddings B of shape (N, D).
+
+        Returns:
+            Tensor: Per-sample loss vector (N,).
+        """
         self.tau = 0.5
         f = lambda x: torch.exp(x / self.tau)
         refl_sim = f(self.sim(z1, z1))
@@ -303,6 +447,19 @@ class SetGNN(nn.Module):
         return -torch.log(safe_ratio)
 
     def loss_hyperedge_ada_maxmargin(self, Z1, Z2):
+        """
+        Symmetric hyperedge contrast with adaptive margin (via tau inside cal_loss).
+
+        Applies `cal_loss` in both directions on transposed inputs so that
+        rows correspond to comparable items (hyperedges), then averages.
+
+        Args:
+            Z1 (Tensor): Embeddings from view 1, shape (D, N) or (N, D).
+            Z2 (Tensor): Embeddings from view 2, shape (D, N) or (N, D).
+
+        Returns:
+            Tensor: Scalar loss (mean over samples).
+        """
         h1 = Z1.T
         h2 = Z2.T
         l1 = self.cal_loss(h1, h2)
@@ -315,14 +472,40 @@ class SetGNN(nn.Module):
     def node_level_loss(self, n1: Tensor, n2: Tensor, node_tau: float,
                         batch_size: Optional[int] = None, num_negs: Optional[int] = None,
                         mean: bool = True):
-        # print(f"n1_filtered shape: {n1.shape}")
-        # print(f"n2_filtered shape: {n2.shape}")
+        """
+        Node-level contrastive loss between two augmented views.
+
+        Args:
+            n1 (Tensor): Node embeddings from view 1 (N, D).
+            n2 (Tensor): Node embeddings from view 2 (N, D).
+            node_tau (float): Temperature for node-level loss.
+            batch_size (Optional[int]): If set, use batched negatives.
+            num_negs (Optional[int]): If set, sample K negatives per anchor.
+            mean (bool): Mean- or sum-reduction over samples.
+
+        Returns:
+            Tensor: Scalar node-level loss.
+        """
         loss = self.__loss(n1, n2, node_tau, batch_size, num_negs, mean)
         return loss
 
     def group_level_loss(self, e1: Tensor, e2: Tensor, edge_tau: float,
                          batch_size: Optional[int] = None, num_negs: Optional[int] = None,
                          mean: bool = True):
+        """
+        Hyperedge-level (group-level) contrastive loss between two views.
+
+        Args:
+            e1 (Tensor): Hyperedge embeddings from view 1 (|E|, D).
+            e2 (Tensor): Hyperedge embeddings from view 2 (|E|, D).
+            edge_tau (float): Temperature for edge-level loss.
+            batch_size (Optional[int]): If set, use batched negatives.
+            num_negs (Optional[int]): If set, sample K negatives per anchor.
+            mean (bool): Mean- or sum-reduction over samples.
+
+        Returns:
+            Tensor: Scalar hyperedge-level loss.
+        """
         loss = self.__loss(e1, e2, edge_tau, batch_size, num_negs, mean)
         return loss
 
@@ -504,24 +687,7 @@ class SetGNN(nn.Module):
         loss = loss_n + loss_e
         return loss.mean() if mean else loss.sum()
 
-    def chgnn(self, data, args, view_gen1, view_gen2, model):
-        sample1, edge_index1 = view_gen1(data, args)
-        sample2, edge_index2 = view_gen2(data, args)
-        loss_sim = F.mse_loss(sample1, sample2)
-        args.w_sim = 1.0
-        loss_sim = args.w_sim * (1 - loss_sim).clone()
-        data1 = data.clone().to(args.device)
-        data2 = data.clone().to(args.device)
-        data1.edge_index = edge_index1
-        data2.edge_index = edge_index2
-        edge_size=data.totedges
-        node_size = data.n_x
-        Z1, _, _, _ = model.forward(data1, edge_weight=None, edge_size=edge_size,node_size=node_size)
-        Z2, _, _, _ = model.forward(data2, edge_weight=None,edge_size=edge_size,node_size=node_size)
 
-        # hypergraph cluster contrast loss
-        gen_loss = model.loss_hyperedge_ada_maxmargin(Z1, Z2) + loss_sim
-        return gen_loss, sample1, edge_index1, sample2, edge_index2
 
     def compute_cluster_assignments(self, embeddings: Tensor, num_clusters: int) -> Tensor:
         """
@@ -538,6 +704,11 @@ class SetGNN(nn.Module):
 
     def pretrain_forward(self, n1, n2, e1, e2, edge_mask, edge_mask1, edge_mask2, masked_index1, masked_index2,
                          args, view_gen1, view_gen2, data, num_nodes, num_edges, num_negs, model, supervised=0):
+        """
+        Aggregate all pretraining losses by task name (genSim/node/graph/membership/supervised).
+        Returns a dict mapping task->loss for weighted/pareto schedulers.
+        """
+
         res = {}
         if 'genSim' in args.tasks:
             res['genSim'], _, _, _, _ = self.chgnn(data=data, args=args, view_gen1=view_gen1, view_gen2=view_gen2,
@@ -966,6 +1137,27 @@ class SimpleHypergraphModel(torch.nn.Module):
         return loss.mean() if mean else loss.sum()
 
     def chgnn(self, data, args, view_gen1, view_gen2, model):
+        """
+        genSim + hypergraph contrast pipeline.
+
+        Steps:
+          1) Generate two augmented views via view generators.
+          2) Encourage view-consistency with an MSE-based similarity term.
+          3) Run encoder on each view and compute a symmetric hyperedge
+             contrastive loss (loss_hyperedge_ada_maxmargin).
+          4) Return total loss + view samples and indices.
+
+        Args:
+            data: PyG data object with x, edge_index, etc.
+            args: Namespace with `device` and weighting hyperparams (e.g., w_sim).
+            view_gen1: First HypergraphViewGenerator.
+            view_gen2: Second HypergraphViewGenerator.
+            model: Encoder model to produce embeddings for each view.
+
+        Returns:
+            Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+                (gen_loss, sample1, edge_index1, sample2, edge_index2)
+        """
         sample1, edge_index1 = view_gen1(data, args)
         sample2, edge_index2 = view_gen2(data, args)
         loss_sim = F.mse_loss(sample1, sample2)
@@ -986,20 +1178,62 @@ class SimpleHypergraphModel(torch.nn.Module):
 
     def pretrain_forward(self, n1, n2, e1, e2, edge_mask, edge_mask1, edge_mask2, masked_index1, masked_index2,
                          args, view_gen1, view_gen2, data, num_nodes, num_edges, num_negs, model, supervised=0):
+        """
+        Compute and aggregate pretraining losses for selected tasks.
+
+        This wrapper orchestrates multiple self-supervised (and optional supervised)
+        objectives during pretraining. Given two augmented views (n1/e1 and n2/e2),
+        it conditionally computes:
+          • 'genSim'       – view-consistency + hyperedge contrast via `chgnn`
+          • 'node'         – node-level contrastive loss between (n1, n2)
+          • 'graph'        – hyperedge-level contrastive loss between (e1, e2)
+          • 'membership'   – membership contrast using masked incidence indices
+          • 'supervised'   – pass-through supervised loss if supplied
+
+        Args:
+            n1, n2 (Tensor): Node embeddings from the two augmented views (|V|, D).
+            e1, e2 (Tensor): Hyperedge embeddings from the two augmented views (|E|, D).
+            edge_mask (BoolTensor): Valid hyperedge mask shared by both views (|E|,).
+            edge_mask1 (BoolTensor): Valid hyperedge mask for view 1 (|E|,).
+            edge_mask2 (BoolTensor): Valid hyperedge mask for view 2 (|E|,).
+            masked_index1 (LongTensor): Masked incidence for view 1 (2, M1) with [node_idx; edge_idx].
+            masked_index2 (LongTensor): Masked incidence for view 2 (2, M2) with [node_idx; edge_idx].
+            args (Namespace): Hyperparameters, including temperatures and batch sizes.
+            view_gen1, view_gen2: View generators used inside `chgnn` when 'genSim' is active.
+            data: PyG data object used for encoding within `chgnn`.
+            num_nodes (int): Number of nodes (used by downstream calls).
+            num_edges (int): Number of hyperedges (used by downstream calls).
+            num_negs (Optional[int]): If provided, number of sampled negatives in contrastive loss.
+            model: Encoder model (used by `chgnn`).
+            supervised (Tensor|float, optional): Supervised loss term (already computed) to include.
+
+        Returns:
+            Dict[str, Tensor]: A mapping from task name to its loss tensor, e.g.,
+                {
+                  'genSim': ...,
+                  'node': ...,
+                  'graph': ...,
+                  'membership': ...,
+                  'supervised': ...
+                }
+        """
+
         res = {}
+
+        # 1) genSim: generate two views, enforce view similarity + hyperedge contrast
         if 'genSim' in args.tasks:
             res['genSim'], _, _, _, _ = self.chgnn(data=data, args=args, view_gen1=view_gen1, view_gen2=view_gen2,
                                                    model=model, num_nodes=num_nodes, num_edges=num_edges)
-
+        # 2) Node-level contrast
         if 'node' in args.tasks:
             res['node'] = self.node_level_loss(n1, n2, args.pretrain_tau_n, batch_size=args.pretrain_ng_batch_size,
                                                num_negs=num_negs)
-
+        # 3) Hyperedge-level (graph-level) contrast
         if 'graph' in args.tasks:
             res['graph'] = self.group_level_loss(e1[edge_mask], e2[edge_mask], args.pretrain_tau_g,
                                                  batch_size=args.pretrain_ng_batch_size,
                                                  num_negs=num_negs)
-
+        # 4) Membership-level contrast: positive pairs come from masked incidences
         if 'membership' in args.tasks:
             loss_m1 = self.membership_level_loss(
                 n=n1,
@@ -1019,6 +1253,7 @@ class SimpleHypergraphModel(torch.nn.Module):
                 mean=True
             )
             res['membership'] = (loss_m1 + loss_m2) * 0.5
+        # 5) Optional supervised loss passthrough
         if 'supervised' in args.tasks:
             res['supervised'] = supervised
         return res;
@@ -1057,6 +1292,11 @@ class SimpleHypergraphModel(torch.nn.Module):
 
 
 class ViewLearner(torch.nn.Module):
+    """
+    Learns edge dropout/retention logits conditioned on (node, hyperedge) embeddings
+    produced by the encoder. Outputs edge-wise logits for view construction.
+    """
+
     def __init__(self, encoder, input_dim, viewer_hidden_dim=64):
         super(ViewLearner, self).__init__()
 
@@ -1079,22 +1319,23 @@ class ViewLearner(torch.nn.Module):
 
     def forward(self, data, device):
 
+        # Encode once to obtain node and hyperedge embeddings from the current graph
         _, edge_feat, node_feat, _ = self.encoder(data.clone())
-
+        # Split true hyperedges (first) vs. self-loops (last) using counts carried in data
         totedges = data.totedges
-        # num_hyperedges = data.num_hyperedges[0]
         num_hyperedges = data.num_hyperedges
         num_self_loop = totedges - num_hyperedges
         edge_index = data.edge_index.clone()
-        # num_self_loop_clone = num_self_loop.clone()
+        # Convert to Python int for slicing (handles tensor inputs)
         num_self_loop_clone = int(num_self_loop)
         node, edge = edge_index[:, :-num_self_loop_clone][0], edge_index[:, :-num_self_loop_clone][1]
+        # Gather per-(node, hyperedge) embeddings
         emb_node = node_feat[node]
         emb_edge = edge_feat[edge]
-
+        # Concatenate [node | hyperedge] embeddings and predict an edge logit
         total_emb = torch.cat([emb_node, emb_edge], 1)
         edge_weight = self.mlp_edge_model(total_emb)
-
+        # Reassemble logits aligned with original edge_index order (true edges + self-loops)
         self_loop_weight = np.ones(shape=(num_self_loop_clone, 1)) * 10.0
         self_loop_weight = torch.FloatTensor(self_loop_weight).to(device)
         weight_logits = torch.cat([edge_weight, self_loop_weight], 0)

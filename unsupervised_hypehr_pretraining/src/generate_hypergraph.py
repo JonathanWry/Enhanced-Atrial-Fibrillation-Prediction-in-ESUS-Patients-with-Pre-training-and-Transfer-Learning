@@ -1,5 +1,31 @@
-import copy
+"""
+============================================================
+Hypergraph View Generator (+ utilities)
+============================================================
+File: (put your filename here, e.g., view_generator.py)
 
+Summary
+-------
+Generates augmented *hypergraph views* for self-/contrastive pretraining.
+Given a PyG-style hypergraph (bipartite incidence `edge_index`), it:
+  1) Row-normalizes node features (`normalize_l2`)
+  2) Encodes nodes with two HypergraphConv layers
+  3) Aggregates node→edge features (mean over incident nodes)
+  4) Samples edge states via Gumbel-Softmax (e.g., keep / neutral / mask)
+  5) Combines edge- and node-level masks (via `aug_node`) to filter incidences
+
+Main Components
+---------------
+• `normalize_l2(X)` : Row-wise normalization (by row-sum; legacy name).
+• `delete_hyperedge(reserve_id, H)` : Remove incidences whose edge id ∉ `reserve_id`.
+• `HypergraphViewGenerator(in_dim, out_dim, head=2, dropout=0.6)` :
+    - 2× HypergraphConv encoder producing edge-state logits/embeddings.
+    - `forward(data, args)` returns (incidence mask, filtered `edge_index`).
+"""
+
+
+
+import copy
 import torch
 import torch.nn as nn, torch.nn.functional as F
 import numpy as np
@@ -11,7 +37,10 @@ from torch_geometric.utils import subgraph
 from aug import aug_node
 
 def normalize_l2(X):
-    """Row-normalize  matrix"""
+    """
+    Row-wise L2 normalization of feature matrix.
+    Each row vector is scaled by its L1 norm (sum of entries).
+    """
     rownorm = X.detach().sum(dim=1,keepdims=True)
     scale = rownorm.pow(-1)
     scale[torch.isinf(scale)] = 0.
@@ -19,6 +48,14 @@ def normalize_l2(X):
     return X
 
 def delete_hyperedge(reserve_id, H):
+    """
+        Remove hyperedges not in reserve_id.
+        Args:
+            reserve_id (Tensor): indices of hyperedges to keep.
+            H (Tensor): incidence matrix [2, num_edges].
+        Returns:
+            new_H (Tensor): filtered incidence matrix.
+        """
     reserve_id = reserve_id.detach().numpy()
     H_size = H.size(1)
     H = H.detach().numpy()
@@ -34,6 +71,11 @@ def delete_hyperedge(reserve_id, H):
 
 # HYPEREDGE ViewGenerator
 class HypergraphViewGenerator(torch.nn.Module):
+    """
+   Module to generate augmented hypergraph views.
+   Encodes node features with HypergraphConv layers,
+   applies edge/node masking and sampling via Gumbel-softmax.
+   """
     def __init__(self,in_dim,out_dim,head=2, dropout=0.6):
         super().__init__()
         self.encoder = nn.ModuleList([
@@ -42,6 +84,14 @@ class HypergraphViewGenerator(torch.nn.Module):
         ])  # Move to device
 
     def forward(self, data, args):
+        """
+        Args:
+            data: input graph data object (with x, edge_index, overlap).
+            args: arguments (must include .device).
+        Returns:
+            final_sample (Tensor): mask over selected edges.
+            edge_index (Tensor): filtered incidence matrix.
+        """
         device = args.device
         X = copy.deepcopy(data.x)  # Original features
         X = normalize_l2(X)

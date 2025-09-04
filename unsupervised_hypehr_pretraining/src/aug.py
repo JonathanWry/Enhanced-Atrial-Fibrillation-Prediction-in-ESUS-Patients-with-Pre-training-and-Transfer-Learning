@@ -1,4 +1,29 @@
-import torch
+"""
+============================================================
+Augmentation Utilities for Hypergraph Learning
+============================================================
+This file implements node-level and edge-level augmentation
+strategies used in hypergraph contrastive learning. It includes:
+
+1. Node-level augmentation (`aug_node`):
+   - Randomly drops nodes with probability inversely related
+     to their 'overlappness' score.
+
+2. Edge-level augmentation (`aug_edge`):
+   - Randomly perturbs hyperedges in the incidence matrix
+     based on node overlappness statistics.
+
+Both functions aim to generate diverse views of the hypergraph
+for robust self-supervised training.
+
+----------------------------
+Usage
+Import and call directly in training or pretraining scripts:
+    from aug import aug_node, aug_edge
+"""
+
+
+
 import torch, numpy as np, scipy.sparse as sp
 import torch_sparse
 from torch_scatter import scatter

@@ -1,3 +1,35 @@
+"""
+==========================================================================
+Data Utilities: Hypergraph Construction, Normalization, and Split Helpers
+==========================================================================
+
+File
+----
+data_utils.py   (paste this header at the top of the file)
+
+Purpose
+-------
+Utility functions for preparing hypergraph data structures and splits.
+
+  • ExtractV2E(data)
+      Ensures edge_index only contains V→E incidence (removes self-loops).
+
+  • Add_Self_Loops(data)
+      Adds node-specific self-loop hyperedges for isolated nodes, updates
+      edge_index and total edge count.
+
+  • norm_contruction(data, option, TYPE)
+      Builds normalization weights for incidence (V2E) or adjacency (V2V):
+         - 'all_one'       : uniform weights
+         - 'deg_half_sym'  : symmetric degree-based normalization
+
+  • rand_train_test_idx(label, train_prop, valid_prop, …)
+      Splits labeled data into train/valid/test indices. Supports:
+         - ignoring negative labels
+         - class-balanced splits
+         - reproducibility with rand_seed
+
+"""
 
 import torch
 

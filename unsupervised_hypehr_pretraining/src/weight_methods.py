@@ -1,6 +1,55 @@
+"""
+======================================================================================
+Multi-Task Weighting Methods: Baselines & Advanced Optimizers
+======================================================================================
+
+File
+----
+weight_methods.py   (paste this header at the top of the file)
+
+Purpose
+-------
+Collection of **multi-task loss weighting strategies** for balancing gradients
+across tasks during training of hypergraph/GNN models.
+
+Implemented Methods
+-------------------
+• STL (Single Task Learning)
+   - Focus on one task only; ignores others.
+
+• LinearScalarization / ScaleInvariantLinearScalarization
+   - Weighted linear combinations of task losses (standard or scale-invariant).
+
+• RLW (Random Loss Weighting)
+   - Randomized task weights at each iteration.
+
+• Uncertainty Weighting (Kendall et al.)
+   - Learns log-variance per task to scale losses.
+
+• DynamicWeightAverage (DWA)
+   - Adjusts weights dynamically from recent loss ratios.
+
+• GradNorm (Chen et al.)
+   - Balances gradient norms across tasks to equalize training speeds.
+
+• MGDA (Sener & Koltun, NeurIPS 2018)
+   - Multi-task gradient descent via min-norm solvers.
+
+• CAGrad (Liu et al.)
+   - Conflict-averse gradient projection with trust parameter *c*.
+
+• PCGrad (Yu et al.)
+   - Projects conflicting task gradients to reduce interference.
+
+• NashMTL (Navon et al.)
+   - Formulates task weighting as Nash bargaining optimization.
+
+• IMTL-G (Liu et al.)
+   - Towards impartial MTL via geometric gradient alignment.
+"""
+
+
 import copy
-
-
 import random
 from abc import abstractmethod
 from typing import Dict, List, Tuple, Union

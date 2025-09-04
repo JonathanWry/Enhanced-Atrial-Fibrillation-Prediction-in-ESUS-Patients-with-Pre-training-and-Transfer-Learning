@@ -1,3 +1,45 @@
+"""
+============================================================
+Hypergraph Dataset Loader (PyG)
+============================================================
+This file provides end-to-end utilities to build a PyTorch Geometric
+hypergraph dataset from raw files (features, hyperedges, labels) and
+persist it in the standard `InMemoryDataset` format.
+
+It includes:
+
+1) Raw → PyG `Data` construction (`load_dataset`)
+   - Loads node embeddings from `node-embeddings-<dataset>`
+   - Loads edge labels (if present), homogeneity, and overlappness tensors
+   - Parses `hyperedges-<dataset>.txt` into a bipartite incidence
+     graph: [[nodes→edges],[edges→nodes]]
+   - Coalesces/sorts edges and sets meta fields:
+     `n_x`, `num_hyperedges`, `n_label`
+
+2) Serialization helper (`save_data_to_pickle`)
+   - Saves any Python object (e.g., `Data`) via pickle to `<root>/<name>`
+
+3) PyG dataset wrapper (`dataset_Hypergraph`)
+   - Manages directory layout: `<root>/<name>/{raw,processed}`
+   - Supports names: mimic3 | cradle | promote | combine_icd3 | combine_icd4
+     and custom families prefixed with `separate_`
+   - `download()`: calls `load_dataset` and writes a raw pickle
+   - `process()`: loads the pickle and saves `processed/data.pt`
+   - Exposes `num_features`, `n_label`, and `data` after load
+
+----------------------------
+Expected Raw Files (per dataset)
+- edge-labels-<dataset>.txt         # optional; CSV per hyperedge
+- hyperedges-<dataset>.txt          # one line per hyperedge, comma-separated node ids
+- homogeneity                       # optional; torch.save()'d tensor
+- overlappness                      # optional; torch.save()'d tensor
+- node-embeddings-<dataset>         # first line: "<n> <dim>", then "<id> <d1> ... <d_dim>"
+
+----------------------------
+"""
+
+
+
 import torch
 import pickle
 import os

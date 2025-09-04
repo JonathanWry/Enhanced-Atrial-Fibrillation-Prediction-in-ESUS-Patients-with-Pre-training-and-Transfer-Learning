@@ -1,3 +1,79 @@
+"""
+======================================================================================
+Main Training Script: Pretraining & Formal Training for Hypergraph Representation
+======================================================================================
+
+File
+----
+main_train.py   (paste this header at the top of the file)
+
+Purpose
+-------
+Implements the full experimental pipeline for training hypergraph-based models
+with optional pretraining, view generation, and formal supervised training.
+
+  • generate_multiple_splits(label, num_splits, …)
+      Creates multiple random train/valid/test splits for cross-validation.
+
+  • pretrain(num_negs, tasks, weighted_method, view_gen1, view_gen2)
+      Executes the pretraining phase using contrastive/self-supervised losses:
+         - genSim: similarity between learned hypergraph views
+         - node: node-level contrastive loss
+         - graph: edge-level (hyperedge) contrastive loss
+         - membership: node–edge incidence prediction
+      Supports Pareto multi-task optimization and weighted task methods.
+
+  • drop_features / drop_incidence / drop_nodes / drop_hyperedges
+      Randomized perturbations for pretraining augmentations.
+
+  • valid_node_edge_mask / common_node_edge_mask / hyperedge_index_masking
+      Compute and apply validity masks across nodes and hyperedges.
+
+  • clique_expansion
+      Converts hyperedges into clique-expanded pairwise graph edges.
+
+  • parse_method(args, data)
+      Builds the model architecture (SetGNN, SimpleHypergraphModel, etc.).
+
+  • GNN_evaluator / evaluate
+      Evaluate models on validation/test sets under vanilla or CACHE regimes.
+
+  • get_subset_ranking
+      Rank nodes within hyperedges by learned edge weights and save lists.
+
+  • eval_mimic3 / eval_cradle
+      Dataset-specific evaluation metrics (multilabel vs. binary).
+
+  • Main Execution (__main__)
+      - Loads dataset and preprocessing
+      - Configures and builds model & optimizers
+      - Executes pretraining (if enabled)
+      - Runs formal training with cross-validation
+      - Logs and saves results
+
+Notes
+-----
+• Supports multiple datasets: MIMIC-III, CRADLE, PROMOTE, and ICD variants.
+• Implements both "vanilla" training (attention weight supervision) and CACHE
+  (counterfactual augmentation for hyperedges).
+• Pretraining can optionally use SGD or Adam optimizers.
+• Outputs include edge representation files, evaluation CSV logs, and result stats.
+
+Dependencies
+------------
+torch, torch_geometric, torch_scatter, sklearn, tqdm, numpy
+Custom modules: generate_hypergraph, models, preprocessing, weight_methods,
+convert_datasets_to_pygDataset, min_norm_solvers
+
+Usage
+------
+python -u train.py --dname=dataset --epochs=600 --cuda=1 --num_labels=1 --num_nodes=num_node --num_labeled_data=all --All_num_layers 3 --cuda=1 --feature_dim=128 --heads=4 --MLP_num_layers 2 --MLP_hidden 32 --model_lambda=0.01 --vanilla --pretrain_epoch=100 --pretrain_lr=1.0e-03 --pretrain_weight_decay=1.0e-06 --pretrain_drop_feature_rate=0.1 --pretrain_drop_incidence_rate=0.1 --pretrain_tau_n=0.3 --pretrain_tau_g=0.3 --pretrain_tau_m=2 --pretrain_w_gS=1 --pretrain_w_g=1 --pretrain_w_m=1 --pretrain_ng_batch_size=2048 --pretrain_m_batch_size=4096 --train_percentage=1.0  --pretrain=True
+
+"""
+
+
+
+
 import os
 import argparse
 from tqdm import tqdm, trange
@@ -101,7 +177,7 @@ def pretrain(num_negs, tasks, weighted_method,view_gen1,view_gen2):
           - Performs forward/backward and gradient clipping.
           - When Pareto MTL: computes normalized gradients and min-norm weights.
           - Uses global `model`, `data`, `args`, `criterion`, etc.
-      """
+    """
     loss_data = {}
     grads = {}
     model.zero_grad()
@@ -114,6 +190,11 @@ def pretrain(num_negs, tasks, weighted_method,view_gen1,view_gen2):
     n1 = n2 = e1 = e2 = edge_mask = edge_mask1 = edge_mask2 = None
     masked_index1 = masked_index2 = None
     if any(task in tasks for task in ['node', 'membership', 'graph']):
+        # --------------------------------------------------------------
+        # Create two stochastic graph views by (1) dropping incidences
+        # and (2) dropping node features. Then compute valid node/edge
+        # masks to ensure both views share comparable supports.
+        # --------------------------------------------------------------
         hyperedge_index1 = drop_incidence(hyperedge_index, args.pretrain_drop_incidence_rate)
         hyperedge_index2 = drop_incidence(hyperedge_index, args.pretrain_drop_incidence_rate)
         x1 = drop_features(features, args.pretrain_drop_feature_rate)

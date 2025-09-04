@@ -1,3 +1,49 @@
+"""
+============================================================
+Hypergraph Preprocessing: Overlappness & Homogeneity
+============================================================
+This script builds basic statistics for a hypergraph dataset and saves them
+for downstream models. It:
+  • Loads hyperedges and (optional) node embeddings for <dataset_name>
+  • Computes node "overlappness" (redundancy/duplication proxy)
+  • Computes hyperedge "homogeneity" (average pairwise co-occurrence)
+  • Persists tensors to disk for later training
+
+------------------------------------------------------------
+Inputs (CLI args)
+  --data_path      Path to the dataset folder containing raw files
+                   required files inside:
+                     hyperedges-<dataset_name>.txt
+                     node-embeddings-<dataset_name>            (text; first line: "<N> <D>")
+  --dataset_name   Dataset identifier (e.g., mimic4)
+  --raw_path       (Unused here; kept for interface compatibility)
+  --num_node       Total number of nodes (int)
+
+Derived paths (under --data_path)
+  hyperedges-<dataset>.txt          # one line per hyperedge, comma-separated node ids
+  node-embeddings-<dataset>         # text embeddings; row 0: "<N> <D>", then "<id> <d1> ... <dD>"
+
+------------------------------------------------------------
+Key Components
+  • HyperDataset
+      - load_graph():    reads 'hyperedges-*.txt' → dict[edge_id] = [node_ids]
+      - load_features(): reads 'node-embeddings-*' → np.ndarray [num_node, dim]
+  • cal_overlappness():            computes node-level redundancy score
+  • cal_degree_of_each_pair():     builds node×node co-occurrence matrix
+  • cal_homogeneity_hyperedge():   averages co-occurrence within each hyperedge
+  • main(): end-to-end pipeline and serialization
+
+------------------------------------------------------------
+Usage
+  python gen_overlap_homogeneity.py \
+      --data_path /path/to/dataset/folder \
+      --dataset_name dataset_name \
+      --num_node num_node
+
+"""
+
+
+
 import argparse
 import random
 import scipy.sparse as sp
@@ -34,6 +80,7 @@ class HyperDataset:
         # self.load_edge_labels()
 
     def load_graph(self):
+        """Load hypergraph structure from 'hyperedges-{dataset}.txt'."""
         file_path = os.path.join(self.PATH, f"hyperedges-{self.dname}.txt")
         with open(os.path.join(self.PATH, file_path), "r", encoding="utf-8") as f:
             idx = 0
@@ -42,12 +89,13 @@ class HyperDataset:
                 self.G[idx] = edge_item
                 idx += 1
                 self.NODE.extend([node for node in edge_item])
+        # Deduplicate node list
         self.NODE = list(set(self.NODE))
         self.NODE_SIZE = len(self.NODE)
         self.EDGE_SIZE = len(self.G)
 
     def load_labels(self):
-        # open_node_json
+        """Load node embeddings from 'node-embeddings-{dataset}'."""
         idx = 0
         with open(os.path.join(self.PATH, f"columns-{self.dname}.json")) as file:
             diagnosis_nodes = json.load(file)
@@ -57,6 +105,7 @@ class HyperDataset:
 
 
     def load_features(self):
+        """Parse text embeddings file into numpy array [num_nodes, dim]."""
         file_path = os.path.join(self.PATH, f"node-embeddings-{self.dname}")
         num_node = max(self.NODE) + 1
         self.num_node = num_node
@@ -109,17 +158,21 @@ class HyperDataset:
             raise FileNotFoundError(f"Embeddings file not found at {file_path}")
         except Exception as e:
             raise RuntimeError(f"Unexpected error while parsing {file_path}: {e}")
+
     def load_overlappness(self):
+        """Load precomputed overlappness tensor."""
         f_path_overlappness = os.path.join(self.PATH, 'overlappness')
         overlappness = torch.load(f_path_overlappness)
         return overlappness
 
     def load_homogeneity(self):
+        """Load precomputed homogeneity tensor."""
         f_homogeneity = os.path.join(self.PATH, 'homogeneity')
         homogeneity = torch.load(f_homogeneity)
         return homogeneity
 
     def load_edge_labels(self):
+        """Load optional edge labels (if available)."""
         file_path = os.path.join(self.PATH, f"edge-labels-{self.dname}.txt")
         with open(os.path.join(self.PATH, file_path), "r", encoding="utf-8") as f:
             for line in f.readlines():
@@ -185,12 +238,10 @@ def cal_overlappness(nlist, G:dict,num_node:int):
 
 
 def cal_degree_of_each_pair(nlist,G:dict,num_node:int):
-    '''
-    :param nlist: node list
-    :param G: hyperedges
-    :return: tensor[nlist,nlist]
-    '''
-
+    """
+    Compute co-occurrence matrix of nodes.
+    degree_matrix[i, j] = #hyperedges containing both node i and j.
+    """
     # degree_matrix = torch.zeros(len(nlist),len(nlist))
     degree_matrix = torch.zeros(num_node, num_node)
     for hyperedge in G.keys():
@@ -206,13 +257,11 @@ def sigmoid(z):
 
 
 def cal_homogeneity_hyperedge(nlist,G:dict,degree_matrix:torch.Tensor, num_node:int):
-    '''
-
-    :param nlist: node list
-    :param G: hyperedges
-    :param pair_degree: degree of each pair
-    :return: tensor[|G|]
-    '''
+    """
+        Compute homogeneity score for each hyperedge:
+          - Average pairwise co-occurrence of its nodes
+          - Apply sigmoid normalization
+    """
     homogeneity = torch.ones(len(G))  # Initialize homogeneity for hyperedges with default value 1
 
     for i, hyperedge in enumerate(G.keys()):

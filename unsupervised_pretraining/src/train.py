@@ -1,6 +1,14 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+#
+# Copyright © 2021 jianhao2 <jianhao2@illinois.edu>
+#
+# Distributed under terms of the MIT license.
+
 """
 ======================================================================================
-Main Training Script: Pretraining & Formal Training for Hypergraph Representation
+Main Training Script: Unsupervised Pretraining & Formal Training for Hypergraph Representation
 ======================================================================================
 
 File

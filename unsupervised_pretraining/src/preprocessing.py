@@ -1,3 +1,11 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+#
+# Copyright © 2021 jianhao2 <jianhao2@illinois.edu>
+#
+# Distributed under terms of the MIT license.
+
 """
 ==========================================================================
 Data Utilities: Hypergraph Construction, Normalization, and Split Helpers
@@ -41,6 +49,20 @@ from torch_geometric.nn.conv.gcn_conv import gcn_norm
 
 
 def ExtractV2E(data):
+    """
+    Extract only the V→E incidence portion of a bipartite hypergraph.
+
+    Assumes:
+        data.edge_index = stacked [V|E ; E|V]
+
+    Sorts edge_index by node indices, trims off E→V half, and updates data.
+
+    Args:
+        data: PyG Data object with .edge_index, .n_x, .num_hyperedges.
+
+    Returns:
+        Updated data with edge_index containing only V→E edges.
+    """
     # Assume edge_index = [V|E;E|V]
     edge_index = data.edge_index
     #     First, ensure the sorting is correct (increasing along edge_index[0])
@@ -56,6 +78,19 @@ def ExtractV2E(data):
 
 
 def Add_Self_Loops(data):
+    """
+    Add per-node self-loop hyperedges for nodes without them.
+
+    - Uses current incidence edge_index (V,E).
+    - Creates new unique hyperedge IDs for missing self-loops.
+    - Updates .totedges and re-sorts edge_index.
+
+    Args:
+        data: PyG Data object with .edge_index, .n_x, .num_hyperedges.
+
+    Returns:
+        Updated data with appended self-loop edges.
+    """
     # update so we dont jump on some indices
     # Assume edge_index = [V;E]. If not, use ExtractV2E()
     edge_index = data.edge_index
@@ -99,6 +134,25 @@ def Add_Self_Loops(data):
 
 
 def norm_contruction(data, option='all_one', TYPE='V2E'):
+    """
+    Construct normalization factors for incidence or V2V graph.
+
+    Options:
+        option='all_one'       → all weights = 1
+        option='deg_half_sym'  → symmetric degree normalization
+
+    TYPE:
+        'V2E' → bipartite incidence normalization
+        'V2V' → gcn_norm applied to V2V projection
+
+    Args:
+        data: PyG Data with .edge_index.
+        option (str): normalization scheme.
+        TYPE (str): 'V2E' or 'V2V'.
+
+    Returns:
+        Updated data with .norm tensor.
+    """
     if TYPE == 'V2E':
         if option == 'all_one':
             data.norm = torch.ones_like(data.edge_index[0])

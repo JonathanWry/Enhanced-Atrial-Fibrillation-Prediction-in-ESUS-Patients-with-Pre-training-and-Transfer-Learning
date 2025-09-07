@@ -1,3 +1,11 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+#
+# Copyright © 2021 jianhao2 <jianhao2@illinois.edu>
+#
+# Distributed under terms of the MIT license.
+
 """
 ============================================================
 Augmentation Utilities for Hypergraph Learning
@@ -21,7 +29,6 @@ Usage
 Import and call directly in training or pretraining scripts:
     from aug import aug_node, aug_edge
 """
-
 
 
 import torch, numpy as np, scipy.sparse as sp

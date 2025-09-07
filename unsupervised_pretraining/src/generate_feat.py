@@ -1,3 +1,11 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+#
+# Copyright © 2021 jianhao2 <jianhao2@illinois.edu>
+#
+# Distributed under terms of the MIT license.
+
 """
 ============================================================
 Random Walks + Word2Vec: Node Embedding Generator

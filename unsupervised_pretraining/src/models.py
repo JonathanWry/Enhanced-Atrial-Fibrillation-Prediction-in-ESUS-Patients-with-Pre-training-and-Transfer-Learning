@@ -1,3 +1,11 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+#
+# Copyright © 2021 jianhao2 <jianhao2@illinois.edu>
+#
+# Distributed under terms of the MIT license.
+
 """
 ===============================================================================
 Hypergraph Neural Network Models (SetGNN, SimpleHypergraphModel, ViewLearner)
@@ -1293,8 +1301,22 @@ class SimpleHypergraphModel(torch.nn.Module):
 
 class ViewLearner(torch.nn.Module):
     """
-    Learns edge dropout/retention logits conditioned on (node, hyperedge) embeddings
-    produced by the encoder. Outputs edge-wise logits for view construction.
+    Learns edge-wise logits for contrastive view generation.
+
+    Given an encoder (e.g., SetGNN) that produces node and hyperedge embeddings,
+    ViewLearner conditions on [node, hyperedge] pairs to predict dropout/retention
+    weights for each incidence edge. Self-loops are handled specially and assigned
+    large positive logits.
+
+    Args:
+        encoder (nn.Module): Base encoder returning (edge_score, edge_feat, node_feat, aux).
+        input_dim (int): Dimensionality of encoder embeddings (per node/hyperedge).
+        viewer_hidden_dim (int, optional): Hidden dimension of the MLP predictor. Default=64.
+
+    Methods:
+        forward(data, device):
+            Runs the encoder, gathers per-(node, hyperedge) embeddings, and outputs
+            logits aligned with `data.edge_index` (first true hyperedges, then self-loops).
     """
 
     def __init__(self, encoder, input_dim, viewer_hidden_dim=64):

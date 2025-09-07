@@ -110,35 +110,36 @@ As in the unsupervised setting, begin by generating features for each dataset.
 
 #### Step 2: Low-Dimensional Representation
 Navigate to the `supervised_pretraining` directory and run `train.py` to obtain low-dimensional feature representations for hyperedges.
--
+
+- 
 ## Downstream Prediction
 
 Two complementary runners are provided:
 
 ### Option A — Train & External Validate (save models + ROC figs)
 
-**Script:** `cohort_experiment.py`
+**Script:** `/downstream_predicting/External_validation.py`
 
 - **Train on main cohort (pick one embedding set per run)**
 
 ```bash
 # Supervised embedding
-python cohort_experiment.py   --train-main   --main-baseline data/main/baseline.csv   --embed-supervised data/main/supervised.csv   --models-dir outputs/main/models   --figs-dir outputs/main/figs
+python External_validation.py   --train-main   --main-baseline data/main/baseline.csv   --embed-supervised data/main/supervised.csv   --models-dir outputs/main/models   --figs-dir outputs/main/figs
 
 # Unsupervised embedding(s)  (CSV or NPY; if multiple given, the first is used for training)
-python cohort_experiment.py   --train-main   --main-baseline data/main/baseline.csv   --embed-unsupervised data/main/unsup_a.csv data/main/unsup_b.csv   --models-dir outputs/main/models   --figs-dir outputs/main/figs
+python External_validation.py   --train-main   --main-baseline data/main/baseline.csv   --embed-unsupervised data/main/unsup_a.csv data/main/unsup_b.csv   --models-dir outputs/main/models   --figs-dir outputs/main/figs
 ```
 
 - **Predict on external cohort with saved models**
 
 ```bash
-python cohort_experiment.py   --predict-external   --external-baseline data/external/baseline.csv   --external-embed-unsupervised data/external/unsup_a.npy data/external/unsup_b.npy   --models-dir outputs/main/models   --figs-dir outputs/external/figs
+python External_validation.py   --predict-external   --external-baseline data/external/baseline.csv   --external-embed-unsupervised data/external/unsup_a.npy data/external/unsup_b.npy   --models-dir outputs/main/models   --figs-dir outputs/external/figs
 ```
 
 - **Train + External Validate in one pass**
 
 ```bash
-python cohort_experiment.py   --train-main --predict-external   --main-baseline data/main/baseline.csv   --embed-supervised data/main/supervised.csv   --external-baseline data/external/baseline.csv   --external-embed-supervised data/external/supervised.csv   --models-dir outputs/main/models   --figs-dir outputs/external/figs
+python External_validation.py   --train-main --predict-external   --main-baseline data/main/baseline.csv   --embed-supervised data/main/supervised.csv   --external-baseline data/external/baseline.csv   --external-embed-supervised data/external/supervised.csv   --models-dir outputs/main/models   --figs-dir outputs/external/figs
 ```
 
 **Outputs:**  
@@ -149,10 +150,10 @@ python cohort_experiment.py   --train-main --predict-external   --main-baseline 
 
 ### Option B — Cross-Validated Benchmarking (nested CV + GridSearch)
 
-**Script:** `af_embed_cv.py`
+**Script:** `/downstream_predicting/ML_prediction.py`
 
 ```bash
-python af_embed_cv.py   --baseline data/main/baseline.csv   --supervised data/main/supervised.csv   --unsupervised data/main/unsup_a.csv data/main/unsup_b.csv   --results outputs/cv/results.csv   --outer-splits 5   --inner-splits 3   --seed 42
+python ML_prediction.py   --baseline data/main/baseline.csv   --supervised data/main/supervised.csv   --unsupervised data/main/unsup_a.csv data/main/unsup_b.csv   --results outputs/cv/results.csv   --outer-splits 5   --inner-splits 3   --seed 42
 ```
 
 **Outputs:**  

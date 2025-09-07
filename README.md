@@ -84,7 +84,7 @@ Across both datasets, **1,494 diagnostic features overlap**, covering 97.7% of E
 ### Unsupervised Representation Learning for Hyperedges
 
 #### Step 1: Feature Generation
-Navigate to the `scripts/` folder to generate initial hyperedge features:
+Navigate to the `unsupervised_pretraining/scripts/` folder to generate initial hyperedge features:
 - **Script**: `gen_feat.sh`
 - **Description**: Runs random walks + Word2Vec to produce node embeddings and hyperedge feature representations.
 
@@ -102,5 +102,10 @@ Once the overlapness and homogeneity files are ready, run the training scripts t
 - `cbicd3.sh` – train on **combined ICD-3** dataset
 - `cbicd4.sh` – train on **combined ICD-4** dataset
 - **Description**: Each script calls the transfer learning framework to pretrain and fine-tune on hypergraph datasets, producing compressed representations of hyperedge features.
-
+- 
+### Supervised Representation Learning for Hyperedges
+#### Step 1: Feature Generation
+As in the unsupervised setting, begin by generating features for each dataset.
+#### Step 2: Low-Dimensional Representation
+Navigate to the supervised_pretraining directory and run train.py to obtain low-dimensional feature representations for hyperedges.
 ---

@@ -78,6 +78,23 @@ Across both datasets, **1,494 diagnostic features overlap**, covering 97.7% of E
 > ⚠️ **Note:** Both ESUS and AI-RESPECT datasets are **institutional EHR data** and not publicly available due to patient privacy. Access requires proper institutional approvals and IRB clearance.  
 ---
 ## Project Structure
+- **assets**: Contains supporting materials for the project.
+
+- **downstream_predicting**: Contains scripts for downstream ML training and validation.
+
+- **supervised_pretraining**: Code for supervised representation learning on hypergraphs.
+  - **src**: Source code for supervised training (layers, models, preprocessing, training).
+  - **outputs**: Stores results and pretrained supervised embeddings.
+
+- **unsupervised_pretraining**: Code for unsupervised representation learning on hypergraphs.
+  - **data**: Dataset folders for unsupervised experiments.
+    - **pyg_data**: Processed data for PyG (PyTorch Geometric).
+    - **raw_data**: Raw input data.
+  - **src**: Source code for unsupervised hypergraph pretraining.
+    - **edge_representation**: output folder for edge-level embedding.
+    - **outputs**: Stores results and embeddings from unsupervised pretraining.
+  - **scripts**: Scripts for preprocessing, hypergraph construction, augmentation, training for unsupervised training.
+- **requirements.txt**: requirement.txt for depedency.
 ---
 ## Usage
 

@@ -104,8 +104,11 @@ Once the overlapness and homogeneity files are ready, run the training scripts t
 - **Description**: Each script calls the transfer learning framework to pretrain and fine-tune on hypergraph datasets, producing compressed representations of hyperedge features.
 - 
 ### Supervised Representation Learning for Hyperedges
+
 #### Step 1: Feature Generation
 As in the unsupervised setting, begin by generating features for each dataset.
+
 #### Step 2: Low-Dimensional Representation
-Navigate to the supervised_pretraining directory and run train.py to obtain low-dimensional feature representations for hyperedges.
+Navigate to the `supervised_pretraining` directory and run `train.py` to obtain low-dimensional feature representations for hyperedges.
+
 ---
